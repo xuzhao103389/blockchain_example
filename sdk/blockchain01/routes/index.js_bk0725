@@ -1,0 +1,293 @@
+
+/*
+ * GET home page.
+ */
+
+////////////////////////node js hfc register deploy invoke query ///////
+
+//Create a test chain
+var path = require('path');
+var fs = require('fs');
+var util = require('util');
+var hfc = require('/opt/gopath/src/github.com/hyperledger/fabric/sdk/node');
+
+var chain = hfc.newChain("testChain");
+//
+//Configure the test chain
+//
+//Set the directory for the local file-based key value store, point to the
+//address of the membership service, and add an associated peer node.
+//
+//If the "tlsca.cert" file exists then the client-sdk will
+//try to connect to the member services using TLS.
+//The "tlsca.cert" is supposed to contain the root certificate (in PEM format)
+//to be used to authenticate the member services certificate.
+//
+//Get the WebAppAdmin member
+
+chain.setKeyValStore(hfc.newFileKeyValStore('/tmp/keyValStore'));
+if (fs.existsSync("tlsca.cert")) {
+ chain.setMemberServicesUrl("grpcs://localhost:50051", fs.readFileSync('tlsca.cert'));
+} else {
+ chain.setMemberServicesUrl("grpc://localhost:50051");
+}
+chain.addPeer("grpc://localhost:30303");
+
+//
+//Set the chaincode deployment mode to either developent mode (user runs chaincode)
+//or network mode (code package built and sent to the peer).
+//
+
+var mode =  'dev';//by now just test the dev mode
+
+if (mode === 'dev') {
+ chain.setDevMode(true);
+} else {
+ chain.setDevMode(false);
+}
+
+//
+//Configure test users
+//
+//Set the values required to register a user with the certificate authority.
+//
+
+test_user1 = {
+ name: "WebApp_user2",
+ role: 1, // Client
+ account: "bank_a",
+ affiliation: "00001"
+};
+
+var queryRes;
+//
+//Declare variables to store the test user Member objects returned after
+//registration and enrollment as they will be used across multiple tests.
+//
+
+var test_user_Member1;
+
+//
+//Declare test variables that will be used to store chaincode values used
+//across multiple tests.
+//
+
+//Path to the local directory containing the chaincode project under $GOPATH
+var testChaincodePath = "github.com/chaincode_example02/";
+
+//Chaincode hash that will be filled in by the deployment operation or
+//chaincode name that will be referenced in development mode.
+var testChaincodeName = "mycc";
+
+//testChaincodeID will store the chaincode ID value after deployment.
+var testChaincodeID;
+
+//Initializing values for chaincode parameters
+var initA = "100";
+var initB = "200";
+var deltaAB = "90";
+
+function getUser(name, cb) {
+    chain.getUser(name, function (err, user) {
+        if (err) return cb(err);
+        if (user.isEnrolled()) return cb(null,user);
+        // User is not enrolled yet, so perform both registration and enrollment
+        // The chain registrar is already set inside 'Set chain registrar' test
+        var registrationRequest = {
+            enrollmentID: name,
+            account: "bank_a",
+            affiliation: "00001"
+        };
+        user.registerAndEnroll(registrationRequest, function (err) {
+            if (err) cb(err, null)
+            cb(null, user)
+        });
+    });
+}
+
+/////////////////
+//Enroll the WebAppAdmin member. WebAppAdmin member is already registered
+//manually by being included inside the membersrvc.yaml file.
+//
+
+
+
+chain.getMember("WebAppAdmin3", function (err, WebAppAdmin) {
+    if (err) {
+    	 console.log("Failed to get WebAppAdmin member " + " ---> " + err);
+    	  process.exit(1);
+    } else {
+    	console.log("successfully got webappserver member");
+        // Enroll the WebAppAdmin member with the certificate authority using
+        // the one time password hard coded inside the membersrvc.yaml.
+        pw = "DJY27pEnl16d";
+        WebAppAdmin.enroll(pw, function (err, crypto) {
+            if (err) {
+            	 console.log("Failed to enroll WebAppAdmin member " + " ---> " + err);
+                // Exit the test script after a failure
+                process.exit(1);
+            } else {
+            	console.log("Successfully enrolled WebAppAdmin member" /*+ " ---> " + JSON.stringify(crypto)*/);
+                // Confirm that the WebAppAdmin token has been created in the key value store
+                path = chain.getKeyValStore().dir + "/member." + WebAppAdmin.getName();
+
+                fs.exists(path, function (exists) {
+                    if (exists) {
+                    	 console.log("Successfully stored client token" /*+ " ---> " + WebAppAdmin.getName()*/);
+                    } else {
+                        // Exit the test script after a failure
+                    	console.log("Failed to store client token for " + WebAppAdmin.getName() + " ---> " + err);
+                    	process.exit(1);
+                    }
+                });
+            }
+        });
+    }
+});
+//
+//Set the WebAppAdmin as the designated chain 'registrar' member who will
+//subsequently register/enroll other new members. WebAppAdmin member is already
+//registered manually by being included inside the membersrvc.yaml file and
+//enrolled in the UT above.
+//
+
+chain.getMember("WebAppAdmin3", function (err, WebAppAdmin) {
+    if (err) {
+    	console.log("Failed to get WebAppAdmin member " + " ---> " + err);
+        // Exit the test script after a failure
+        process.exit(1);
+    } else {
+    	console.log("Successfully got WebAppAdmin member");
+
+        // Set the WebAppAdmin as the designated chain registrar
+        chain.setRegistrar(WebAppAdmin);
+
+        // Confirm that the chain registrar is now WebAppAdmin
+        console.log("chain.getRegistrar().getName()==" +  chain.getRegistrar().getName());
+        
+    }
+});
+//
+//Register and enroll a new user with the certificate authority.
+//This will be performed by the registrar member, WebAppAdmin.
+//
+
+function deploy(){
+ getUser(test_user1.name, function (err, user) {
+    if (err) {
+    	console.log("deploy  Failed to get " + test_user1.name + " ---> ", err);
+        // Exit the test script after a failure
+        process.exit(1);
+    } else {
+        test_user_Member1 = user;
+
+        console.log(" Successfully registered and enrolled " + test_user_Member1.getName());
+        //deploy
+        //Construct the deploy request
+        var deployRequest = {
+        // Function to trigger
+        fcn: "init",
+        // Arguments to the initializing function
+        args: ["d", initA, "k", initB]
+        };
+
+        if (mode === 'dev') {
+         // Name required for deploy in development mode
+         deployRequest.chaincodeName = testChaincodeName;
+        } else {
+         // Path (under $GOPATH) required for deploy in network mode
+         deployRequest.chaincodePath = testChaincodePath;
+        }
+
+        //Trigger the deploy transaction
+        console.log("test_user_Member1.getname()=="+ test_user_Member1.getName())
+        var deployTx = test_user_Member1.deploy(deployRequest);
+        console.log("testChaincodeID:" + testChaincodeID);
+
+     
+    }
+});
+}
+function invoke(){
+	 getUser(test_user1.name, function (err, user) {
+	    if (err) {
+	    	console.log("invoke Failed to get " + test_user1.name + " ---> ", err);
+	        // Exit the test script after a failure
+	        process.exit(1);
+	    } else {
+	        test_user_Member1 = user;
+
+	        console.log(" Successfully registered and enrolled " + test_user_Member1.getName());
+	        //deploy
+	        //Construct the deploy request
+	        // Construct the invoke request
+	        var invokeRequest = {
+	            // Name (hash) required for invoke
+	            chaincodeID: testChaincodeName,
+	            // Function to trigger
+	            fcn: "invoke",
+	            // Parameters for the invoke function
+	            args: ["d", "k", deltaAB]
+	        };
+
+	        // Trigger the invoke transaction
+	        var invokeTx = test_user_Member1.invoke(invokeRequest);
+
+	     
+	    }
+	});
+}
+function query(){
+	 getUser(test_user1.name, function (err, user) {
+	    if (err) {
+	    	console.log("query : Failed to get " + test_user1.name + " ---> ", err);
+	        // Exit the test script after a failure
+	        process.exit(1);
+	    } else {
+	        test_user_Member1 = user;
+
+	        console.log(" Successfully registered and enrolled " + test_user_Member1.getName());
+	        //deploy
+	        //Construct the deploy request
+	        // Construct the invoke request
+	     // Construct the query request
+	        var queryRequest = {
+	            // Name (hash) required for query
+	            chaincodeID: testChaincodeName,
+	            // Function to trigger
+	            fcn: "query",
+	            // Existing state variable to retrieve
+	            args: ["k"]
+	        };
+
+	        // Trigger the query transaction
+
+	      var   queryTx = test_user_Member1.query(queryRequest);
+	      queryTx.on("submitted",function(rqueryResultsesults) {
+	          console.log("submitted: results=%s",queryResults);
+	         
+	      });
+	      queryTx.on("complete",function(queryResults) {
+	    	  //here change the response from .go language into a json format
+	    	  JSON.stringify(queryResults);
+	    	   queryRes = JSON.parse(queryResults.result.toString().split(" "));
+	    	  console.log("complete: results:key == ",queryRes.Name +"; value == "+ queryRes.Amount);
+	      });
+	      queryTx.on("error",function(err) {
+	          console.log("error: %j",err);
+	      });
+
+           
+	     
+	    }
+	});
+}
+//query();
+exports.index = function(req, res){
+	
+ // res.render('index', { title: 'Blockchain IBM' ,query: query()});
+  
+};
+
+
+

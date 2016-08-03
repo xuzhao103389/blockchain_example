@@ -1,0 +1,27 @@
+doctype html
+html
+  head
+    h1  #{title}
+    
+script(type='text/javascript' ).
+  function to() {
+    
+     return '/loginRes';
+  };
+
+
+
+block content
+  .page-header
+   
+
+
+form(name="input", action="/loginRes", method="post")
+  | Username:
+  input(type="text", name="user")
+
+  | Password:
+  input(type="password", name="pswd")
+
+  input(type="submit", value="Submit")
+

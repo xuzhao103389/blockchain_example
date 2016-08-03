@@ -1,0 +1,20 @@
+doctype html
+html
+  head
+    h1  #{title}
+    
+script(type='text/javascript' ).
+  function to() {
+    var getval = document.getElementById("sessionID").value;
+     return '/registerRes?' + getval;
+  };
+
+
+
+block content
+  .page-header
+   
+  Please input your username:
+ 
+  input(type='text', id='sessionID', value=valueID)
+  input(type='button', value='Submit', onclick="location.href = to()")  
